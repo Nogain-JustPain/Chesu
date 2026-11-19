@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Chess } from 'chess.js'
 import { Chessboard } from 'react-chessboard'
 import { getEngine } from './engine'
+import { sfx } from './sfx'
 
 const LEVELS = [
   { id: 'pemula', name: 'Pemula', depth: 1, mpv: 5, window: 500 },
@@ -35,6 +36,16 @@ const MSG = {
   generic: ['Hmm, gua mikir dulu…', 'Oke, gua jalan ini.', 'Menarik. Lanjut.', 'Santai, kita nikmatin aja.', 'Boleh juga pembukaannya.'],
 }
 
+// Titik petak legal (lingkaran kalau bisa makan) + highlight bidak yang dipilih
+function dots(game, sq) {
+  const st = {}
+  if (!sq) return st
+  st[sq] = { background: 'rgba(246,246,105,.5)' }
+  for (const m of game.moves({ square: sq, verbose: true }))
+    st[m.to] = { background: game.get(m.to) ? 'radial-gradient(transparent 0%,transparent 78%,rgba(43,54,49,.28) 80%)' : 'radial-gradient(rgba(43,54,49,.25) 22%,transparent 24%)' }
+  return st
+}
+
 function Play({ onReview }) {
   const [lvl, setLvl] = useState('santai')
   const [color, setColor] = useState('w')
@@ -43,6 +54,8 @@ function Play({ onReview }) {
   const g = useRef(new Chess())
   const gid = useRef(0)
   const prevCp = useRef(null)
+  const [sel, setSel] = useState(null)
+  const [endOpen, setEndOpen] = useState(false)
   const chatRef = useRef(null)
   const [chat, setChat] = useState(() => [pick(MSG.greet)])
   useEffect(() => { if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight }, [chat, thinking])
@@ -71,6 +84,7 @@ function Play({ onReview }) {
     prevCp.current = cp
     let mv = null
     try { mv = g.current.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] }) } catch {}
+    if (mv) sfx.play(mv)
     const gm = g.current
     let kind = 'generic'
     if (gm.isCheckmate()) kind = 'cpuMate'
@@ -87,34 +101,51 @@ function Play({ onReview }) {
   function fresh(c) {
     gid.current++
     g.current = new Chess(); prevCp.current = null
-    setColor(c); setThinking(false); setChat([pick(MSG.greet)]); sync()
+    setColor(c); setThinking(false); setSel(null); setChat([pick(MSG.greet)]); sync()
     if (c === 'b') reply()
   }
-  function onDrop(from, to) {
+  function doMove(from, to) {
     if (thinking || g.current.isGameOver() || g.current.turn() !== color) return false
-    try { g.current.move({ from, to, promotion: 'q' }) } catch { return false }
-    sync()
+    let mv
+    try { mv = g.current.move({ from, to, promotion: 'q' }) } catch { return false }
+    sfx.play(mv); setSel(null); sync()
     if (g.current.isGameOver()) say(pick(g.current.isCheckmate() ? MSG.playerMate : MSG.draw))
     else reply()
     return true
   }
+  const onDrop = (f, t) => doMove(f, t)
+  function onSq(sq) {
+    if (thinking || g.current.isGameOver() || g.current.turn() !== color) return
+    if (sel && g.current.moves({ square: sel, verbose: true }).some(m => m.to === sq)) { doMove(sel, sq); return }
+    const p = g.current.get(sq)
+    setSel(p && p.color === color ? sq : null)
+  }
   function undo() {
     if (thinking || !g.current.history().length) return
-    g.current.undo(); prevCp.current = null
+    g.current.undo(); prevCp.current = null; setSel(null)
     if (g.current.turn() !== color && g.current.history().length) g.current.undo()
     sync()
   }
 
   const game = g.current
   const hist = game.history()
+  const lm = game.history({ verbose: true }).slice(-1)[0]
+  const styles = { ...(lm ? { [lm.from]: { background: 'rgba(95,133,119,.3)' }, [lm.to]: { background: 'rgba(95,133,119,.3)' } } : {}), ...(thinking ? {} : dots(game, sel)) }
+  const over = game.isGameOver()
+  useEffect(() => {
+    if (!over) { setEndOpen(false); return }
+    const t = setTimeout(() => setEndOpen(true), 900)
+    return () => clearTimeout(t)
+  }, [over, hist.length])
   let status = thinking ? 'Chesu lagi mikir…' : 'Giliran lu.'
   if (game.isCheckmate()) status = game.turn() === color ? 'Skakmat. Kalah nih, rematch yuk.' : 'Skakmat. Lu menang! 🎉'
   else if (game.isGameOver()) status = 'Remis, seri.'
 
   return (
+    <>
     <div className="stage">
       <div className="boardwrap">
-        <Chessboard {...BOARD} position={game.fen()} boardOrientation={color === 'w' ? 'white' : 'black'} onPieceDrop={onDrop} />
+        <Chessboard {...BOARD} position={game.fen()} boardOrientation={color === 'w' ? 'white' : 'black'} onPieceDrop={onDrop} onSquareClick={onSq} onPieceDragBegin={(p, sq) => thinking || setSel(sq)} customSquareStyles={styles} />
       </div>
       <aside className="panel">
         <p className="status">{status}</p>
@@ -141,6 +172,19 @@ function Play({ onReview }) {
         </div>
       </aside>
     </div>
+    {endOpen && (
+      <div className="overlay" onClick={() => setEndOpen(false)}>
+        <div className="modal" onClick={e => e.stopPropagation()}>
+          <h2>{game.isCheckmate() ? (game.turn() === color ? 'Kali ini kalah' : 'Lu menang! 🎉') : 'Seri'}</h2>
+          <p className="hint">{status}</p>
+          <div className="btns">
+            <button className="primary" onClick={() => { setEndOpen(false); fresh(color) }}>Main lagi</button>
+            <button onClick={() => { setEndOpen(false); onReview(game.pgn()) }}>Bedah game ini</button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   )
 }
 
@@ -152,6 +196,9 @@ function Analyze({ initial }) {
   const [err, setErr] = useState('')
   const [cur, setCur] = useState(0)
   const [busy, setBusy] = useState(false)
+  const [free, setFree] = useState([])
+  const [sel, setSel] = useState(null)
+  const [live, setLive] = useState(null)
 
   async function run(text) {
     setErr('')
@@ -190,11 +237,28 @@ function Analyze({ initial }) {
   useEffect(() => { if (initial) { setPgn(initial); run(initial) } }, [initial])
 
   const n = res?.hist.length ?? 0
-  const go = i => setCur(c => Math.max(0, Math.min(n, typeof i === 'function' ? i(c) : i)))
+  const go = i => { setFree([]); setSel(null); setCur(c => Math.max(0, Math.min(n, typeof i === 'function' ? i(c) : i))) }
   useEffect(() => {
     const k = e => { if (e.target.tagName === 'TEXTAREA') return; if (e.key === 'ArrowLeft') go(c => c - 1); if (e.key === 'ArrowRight') go(c => c + 1) }
     window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k)
   }, [n])
+
+  const shown = res ? (free.length ? free[free.length - 1].fen : res.fens[cur]) : null
+  useEffect(() => {
+    if (!shown || !free.length) { setLive(null); return }
+    let dead = false
+    const t = new Chess(shown)
+    if (t.isGameOver()) { setLive({ cp: t.isCheckmate() ? (t.turn() === 'w' ? -1000 : 1000) : 0, best: null, line: '' }); return }
+    setLive(null)
+    getEngine().run(shown, { depth: 14 }).then(o => {
+      const l = o.lines[0]
+      if (dead || !l) return
+      const c = new Chess(shown), sans = []
+      for (const u of l.pv.slice(0, 6)) { try { sans.push(c.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] }).san) } catch { break } }
+      setLive({ cp: Math.max(-1000, Math.min(1000, l.cp * (t.turn() === 'w' ? 1 : -1))), best: o.best, line: sans.join(' ') })
+    })
+    return () => { dead = true }
+  }, [shown, free.length])
 
   if (!res) return (
     <div className="intro">
@@ -209,18 +273,32 @@ function Analyze({ initial }) {
     </div>
   )
 
-  const last = cur > 0 ? res.hist[cur - 1] : null
-  const mv = cur > 0 ? res.moves[cur - 1] : null
-  const bu = res.bests[cur]
-  const hl = last ? { [last.from]: { background: 'rgba(95,133,119,.35)' }, [last.to]: { background: 'rgba(95,133,119,.35)' } } : {}
-  const w = winPct(res.cps[cur])
+  const inFree = free.length > 0
+  const last = inFree ? free[free.length - 1] : cur > 0 ? res.hist[cur - 1] : null
+  const mv = !inFree && cur > 0 ? res.moves[cur - 1] : null
+  const bu = inFree ? live?.best : res.bests[cur]
+  const lastHl = last ? { [last.from]: { background: 'rgba(95,133,119,.35)' }, [last.to]: { background: 'rgba(95,133,119,.35)' } } : {}
+  const styles = { ...lastHl, ...dots(new Chess(shown), sel) }
+  const w = inFree ? (live ? winPct(live.cp) : 50) : winPct(res.cps[cur])
+  const score = live ? (Math.abs(live.cp) >= 900 ? 'Mate' : (live.cp > 0 ? '+' : '') + (live.cp / 100).toFixed(1)) : '…'
+  const tryMove = (from, to) => {
+    const c = new Chess(shown)
+    let m
+    try { m = c.move({ from, to, promotion: 'q' }) } catch { return false }
+    sfx.play(m); setSel(null); setFree(f => [...f, { fen: c.fen(), san: m.san, from, to }]); return true
+  }
+  const onSq = sq => {
+    const c = new Chess(shown)
+    if (sel && c.moves({ square: sel, verbose: true }).some(m => m.to === sq)) { tryMove(sel, sq); return }
+    setSel(c.get(sq) ? sq : null)
+  }
   return (
     <div className="stage">
       <div className="boardwrap evalrow">
         <div className="eval"><i style={{ height: `${w}%` }} /></div>
         <div style={{ flex: 1 }}>
-          <Chessboard {...BOARD} position={res.fens[cur]} arePiecesDraggable={false} customSquareStyles={hl}
-            customArrows={bu ? [[bu.slice(0, 2), bu.slice(2, 4), 'rgba(95,133,119,.75)']] : []} />
+          <Chessboard {...BOARD} position={shown} onPieceDrop={tryMove} onSquareClick={onSq} onPieceDragBegin={(p, sq) => setSel(sq)}
+            customSquareStyles={styles} customArrows={bu ? [[bu.slice(0, 2), bu.slice(2, 4), 'rgba(95,133,119,.75)']] : []} />
           <div className="btns nav">
             <button onClick={() => go(0)}>⏮</button><button onClick={() => go(c => c - 1)}>◀</button>
             <button onClick={() => go(c => c + 1)}>▶</button><button onClick={() => go(n)}>⏭</button>
@@ -232,19 +310,33 @@ function Analyze({ initial }) {
           <div><b>{res.acc.w}</b><span>{res.names.w}</span></div>
           <div><b>{res.acc.b}</b><span>{res.names.b}</span></div>
         </div>
-        <p className="status small">
-          {mv ? <><b>{Math.ceil(cur / 2)}{mv.color === 'w' ? '.' : '...'} {mv.san}</b> · {LABEL[mv.cls]}{mv.cls !== 'ok' && res.bestSan[cur - 1] ? `. Harusnya: ${res.bestSan[cur - 1]}` : ''}</> : 'Posisi awal. Panah hijau = langkah terbaik di posisi ini.'}
-        </p>
+        {inFree ? (
+          <div className="live">
+            <p className="status small"><b>Analisis langsung: {score}</b>{live?.line ? <> · saran mesin: {live.line}</> : ''}</p>
+            <p className="hint">Variasi: {free.map(x => x.san).join(' ')}</p>
+            <div className="btns">
+              <button onClick={() => { setFree(f => f.slice(0, -1)); setSel(null) }}>Undo</button>
+              <button className="primary" onClick={() => { setFree([]); setSel(null) }}>Balik ke game</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <p className="status small">
+              {mv ? <><b>{Math.ceil(cur / 2)}{mv.color === 'w' ? '.' : '...'} {mv.san}</b> · {LABEL[mv.cls]}{mv.cls !== 'ok' && res.bestSan[cur - 1] ? `. Harusnya: ${res.bestSan[cur - 1]}` : ''}</> : 'Posisi awal. Panah hijau = langkah terbaik di posisi ini.'}
+            </p>
+            <p className="hint">Geser atau klik bidak di papan buat nyoba variasi sendiri. Mesin ikut ngitung langsung.</p>
+          </>
+        )}
         <div className="moves">
           {pairs(res.moves).map((p, i) => (
             <div className="row" key={i}><span className="no">{i + 1}</span>
               {p.map((m, j) => (
-                <button key={j} className={`mv ${m.cls} ${cur === i * 2 + j + 1 ? 'on' : ''}`} onClick={() => setCur(i * 2 + j + 1)}>{m.san}</button>
+                <button key={j} className={`mv ${m.cls} ${!inFree && cur === i * 2 + j + 1 ? 'on' : ''}`} onClick={() => go(i * 2 + j + 1)}>{m.san}</button>
               ))}
             </div>
           ))}
         </div>
-        <div className="btns"><button onClick={() => { setRes(null); setPgn('') }}>Game lain</button></div>
+        <div className="btns"><button onClick={() => { setRes(null); setPgn(''); setFree([]) }}>Game lain</button></div>
       </aside>
     </div>
   )
@@ -253,14 +345,18 @@ function Analyze({ initial }) {
 export default function App() {
   const [tab, setTab] = useState('main')
   const [review, setReview] = useState('')
+  const [muted, setMuted] = useState(false)
   return (
     <div className="wrap">
       <header>
         <h1>Chesu</h1>
-        <nav className="seg">
+        <div className="hr">
+          <button className="snd" aria-label="Suara" onClick={() => { const v = !muted; setMuted(v); sfx.setMuted(v) }}>{muted ? '🔇' : '🔊'}</button>
+          <nav className="seg">
           <button className={tab === 'main' ? 'on' : ''} onClick={() => setTab('main')}>Main</button>
           <button className={tab === 'analisis' ? 'on' : ''} onClick={() => setTab('analisis')}>Analisis</button>
         </nav>
+        </div>
       </header>
       <div hidden={tab !== 'main'}><Play onReview={p => { setReview(p); setTab('analisis') }} /></div>
       <div hidden={tab !== 'analisis'}><Analyze initial={review} /></div>
