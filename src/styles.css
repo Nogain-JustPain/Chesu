@@ -42,3 +42,7 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px sol
 .intro{max-width:620px;display:flex;flex-direction:column;gap:12px}
 .bar{height:6px;background:var(--line);border-radius:6px;overflow:hidden}.bar i{display:block;height:100%;background:var(--ac);transition:width .2s}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+.chat{display:flex;flex-direction:column;gap:6px;max-height:170px;overflow:auto}
+.bubble{margin:0;padding:8px 12px;background:#fff;border:1px solid var(--line);border-radius:14px 14px 14px 4px;max-width:92%;font-size:14px;align-self:flex-start}
+.typing{color:var(--mut);letter-spacing:3px}

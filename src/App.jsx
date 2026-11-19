@@ -17,8 +17,23 @@ const BOARD = {
 }
 const winPct = cp => 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * cp)) - 1)
 const grade = d => (d >= 20 ? 'blunder' : d >= 10 ? 'mistake' : d >= 5 ? 'inacc' : 'ok')
-const LABEL = { blunder: 'Blunder', mistake: 'Kesalahan', inacc: 'Kurang akurat', ok: 'Baik' }
+const LABEL = { blunder: 'Blunder', mistake: 'Salah langkah', inacc: 'Kurang pas', ok: 'Aman' }
 const pairs = list => list.reduce((a, m, i) => (i % 2 ? (a[a.length - 1].push(m), a) : (a.push([m]), a)), [])
+
+const pick = a => a[Math.floor(Math.random() * a.length)]
+const MSG = {
+  greet: ['Yuk mulai! Jangan nangis ya 😎', 'Santai aja, gua juga santai kok.', 'Gas, lu jalan duluan atau gua? 😄'],
+  gloat: ['Hmm, lu yakin langkah itu? 👀', 'Makasih hadiahnya 😏', 'Itu kayaknya kurang aman deh…'],
+  great: ['Waduh, langkah bagus juga lu 😳', 'Oke itu sakit. Boleh juga lu.', 'Hmm, gua harus lebih hati-hati nih.'],
+  cpuCapture: ['Maaf ya, gua ambil dulu 😌', 'Nyam. Makasih bidaknya.', 'Satu bidak mampir ke kantong gua.'],
+  playerCapture: ['Eh, bidak gua! 😭', 'Oke oke, itu fair.', 'Yah… yaudah deh, gua balas nanti.'],
+  cpuCheck: ['Skak! Awas rajanya 👑', 'Skak ya, cek rajanya.'],
+  playerCheck: ['Skak ya? Oke, gua amanin dulu.', 'Eh, rajanya diganggu 😅'],
+  cpuMate: ['Skakmat! GG, rematch yuk 🤝', 'Skakmat. Seru kok mainnya!'],
+  playerMate: ['Yah, kalah gua. GG, bagus mainnya! 👏', 'Skakmat… oke, lu menang. Rematch?'],
+  draw: ['Seri. Lumayan lah 🤝'],
+  generic: ['Hmm, gua mikir dulu…', 'Oke, gua jalan ini.', 'Menarik. Lanjut.', 'Santai, kita nikmatin aja.', 'Boleh juga pembukaannya.'],
+}
 
 function Play({ onReview }) {
   const [lvl, setLvl] = useState('santai')
@@ -27,47 +42,74 @@ function Play({ onReview }) {
   const [thinking, setThinking] = useState(false)
   const g = useRef(new Chess())
   const gid = useRef(0)
+  const prevCp = useRef(null)
+  const chatRef = useRef(null)
+  const [chat, setChat] = useState(() => [pick(MSG.greet)])
+  useEffect(() => { if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight }, [chat, thinking])
   const lv = LEVELS.find(l => l.id === lvl)
   const sync = () => setTick(t => t + 1)
 
+  const say = t => setChat(c => [...c.slice(-30), t])
   async function reply() {
     if (g.current.isGameOver()) return
-    const id = gid.current
+    const id = gid.current, t0 = Date.now()
+    const pm = g.current.history({ verbose: true }).slice(-1)[0]
     setThinking(true)
     const r = await getEngine().run(g.current.fen(), { depth: lv.depth, multipv: lv.mpv || 1, elo: lv.elo })
-    if (id !== gid.current) return
-    let uci = r.best
+    let uci = r.best, line = r.lines[0]
     if (lv.window && r.lines.length) {
       const pool = r.lines.filter(l => l.cp >= r.lines[0].cp - lv.window)
-      uci = pool[Math.floor(Math.random() * pool.length)].pv[0]
+      line = pool[Math.floor(Math.random() * pool.length)]; uci = line.pv[0]
     }
-    try { g.current.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] }) } catch {}
-    setThinking(false)
-    sync()
+    // jeda biar terasa seperti lawan yang lagi mikir
+    const wait = (lv.id === 'pemula' ? 500 : 900) + Math.random() * 1300 - (Date.now() - t0)
+    if (wait > 0) await new Promise(res => setTimeout(res, wait))
+    if (id !== gid.current) return
+    const clamp = v => Math.max(-1000, Math.min(1000, v))
+    const cp = line ? clamp(line.cp) : 0
+    const delta = prevCp.current == null ? 0 : cp - prevCp.current
+    prevCp.current = cp
+    let mv = null
+    try { mv = g.current.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] }) } catch {}
+    const gm = g.current
+    let kind = 'generic'
+    if (gm.isCheckmate()) kind = 'cpuMate'
+    else if (gm.isGameOver()) kind = 'draw'
+    else if (lv.depth >= 3 && delta >= 150) kind = 'gloat'
+    else if (lv.depth >= 3 && delta <= -150) kind = 'great'
+    else if (mv?.captured) kind = 'cpuCapture'
+    else if (pm?.captured) kind = 'playerCapture'
+    else if (mv?.san.includes('+')) kind = 'cpuCheck'
+    else if (pm?.san.includes('+')) kind = 'playerCheck'
+    say(pick(MSG[kind]))
+    setThinking(false); sync()
   }
   function fresh(c) {
     gid.current++
-    g.current = new Chess()
-    setColor(c); setThinking(false); sync()
+    g.current = new Chess(); prevCp.current = null
+    setColor(c); setThinking(false); setChat([pick(MSG.greet)]); sync()
     if (c === 'b') reply()
   }
   function onDrop(from, to) {
     if (thinking || g.current.isGameOver() || g.current.turn() !== color) return false
     try { g.current.move({ from, to, promotion: 'q' }) } catch { return false }
-    sync(); reply(); return true
+    sync()
+    if (g.current.isGameOver()) say(pick(g.current.isCheckmate() ? MSG.playerMate : MSG.draw))
+    else reply()
+    return true
   }
   function undo() {
     if (thinking || !g.current.history().length) return
-    g.current.undo()
+    g.current.undo(); prevCp.current = null
     if (g.current.turn() !== color && g.current.history().length) g.current.undo()
     sync()
   }
 
   const game = g.current
   const hist = game.history()
-  let status = thinking ? 'Komputer sedang berpikir…' : 'Giliranmu.'
-  if (game.isCheckmate()) status = game.turn() === color ? 'Skakmat. Kamu kalah.' : 'Skakmat. Kamu menang!'
-  else if (game.isGameOver()) status = 'Remis.'
+  let status = thinking ? 'Chesu lagi mikir…' : 'Giliran lu.'
+  if (game.isCheckmate()) status = game.turn() === color ? 'Skakmat. Kalah nih, rematch yuk.' : 'Skakmat. Lu menang! 🎉'
+  else if (game.isGameOver()) status = 'Remis, seri.'
 
   return (
     <div className="stage">
@@ -76,6 +118,10 @@ function Play({ onReview }) {
       </div>
       <aside className="panel">
         <p className="status">{status}</p>
+        <div className="chat" ref={chatRef}>
+          {chat.map((t, i) => <p key={i} className="bubble">{t}</p>)}
+          {thinking && <p className="bubble typing">•••</p>}
+        </div>
         <label className="field">Lawan
           <select value={lvl} onChange={e => setLvl(e.target.value)}>
             {LEVELS.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
@@ -84,14 +130,14 @@ function Play({ onReview }) {
         <div className="btns">
           <button className="primary" onClick={() => fresh('w')}>Main putih</button>
           <button className="primary" onClick={() => fresh('b')}>Main hitam</button>
-          <button onClick={undo} disabled={thinking || !hist.length}>Ulangi langkah</button>
-          <button onClick={() => onReview(game.pgn())} disabled={!hist.length}>Analisis game ini</button>
+          <button onClick={undo} disabled={thinking || !hist.length}>Undo langkah</button>
+          <button onClick={() => onReview(game.pgn())} disabled={!hist.length}>Bedah game ini</button>
         </div>
         <div className="moves">
           {pairs(hist).map((p, i) => (
             <div className="row" key={i}><span className="no">{i + 1}</span><span>{p[0]}</span><span>{p[1]}</span></div>
           ))}
-          {!hist.length && <p className="hint">Gerakkan bidak untuk mulai. Level Pemula sengaja bisa blunder.</p>}
+          {!hist.length && <p className="hint">Gerakin bidak buat mulai. Level Pemula sengaja suka blunder, santai aja.</p>}
         </div>
       </aside>
     </div>
@@ -110,9 +156,9 @@ function Analyze({ initial }) {
   async function run(text) {
     setErr('')
     const g = new Chess()
-    try { g.loadPgn(text.trim()) } catch { setErr('PGN tidak bisa dibaca. Salin ulang dari chess.com.'); return }
+    try { g.loadPgn(text.trim()) } catch { setErr('PGN-nya kebaca aneh. Coba copy ulang dari chess.com.'); return }
     const hist = g.history({ verbose: true })
-    if (!hist.length) { setErr('Tidak ada langkah di PGN ini.'); return }
+    if (!hist.length) { setErr('PGN-nya nggak ada langkahnya.'); return }
     const names = { w: g.header().White || 'Putih', b: g.header().Black || 'Hitam' }
     const r = new Chess(); const fens = [r.fen()]
     for (const m of hist) { r.move(m.san); fens.push(r.fen()) }
@@ -152,8 +198,8 @@ function Analyze({ initial }) {
 
   if (!res) return (
     <div className="intro">
-      <h2>Tempel PGN game kamu</h2>
-      <p className="hint">Di chess.com: buka game, klik Bagikan, lalu salin PGN.</p>
+      <h2>Tempel PGN game lu</h2>
+      <p className="hint">Di chess.com: buka game, klik Share, terus copy PGN-nya.</p>
       <textarea value={pgn} onChange={e => setPgn(e.target.value)} placeholder="1. d4 d5 2. Bf4 …" />
       <div className="btns">
         <button className="primary" disabled={busy || !pgn.trim()} onClick={() => run(pgn)}>{busy ? `Menganalisis ${prog}/${total}` : 'Analisis'}</button>
@@ -187,7 +233,7 @@ function Analyze({ initial }) {
           <div><b>{res.acc.b}</b><span>{res.names.b}</span></div>
         </div>
         <p className="status small">
-          {mv ? <><b>{Math.ceil(cur / 2)}{mv.color === 'w' ? '.' : '...'} {mv.san}</b> · {LABEL[mv.cls]}{mv.cls !== 'ok' && res.bestSan[cur - 1] ? `. Lebih baik: ${res.bestSan[cur - 1]}` : ''}</> : 'Posisi awal. Panah hijau = langkah terbaik di posisi ini.'}
+          {mv ? <><b>{Math.ceil(cur / 2)}{mv.color === 'w' ? '.' : '...'} {mv.san}</b> · {LABEL[mv.cls]}{mv.cls !== 'ok' && res.bestSan[cur - 1] ? `. Harusnya: ${res.bestSan[cur - 1]}` : ''}</> : 'Posisi awal. Panah hijau = langkah terbaik di posisi ini.'}
         </p>
         <div className="moves">
           {pairs(res.moves).map((p, i) => (
