@@ -11,8 +11,8 @@ const LEVELS = [
   { id: 'kuat', name: 'Kuat', depth: 12, elo: 1900 },
 ]
 const BOARD = {
-  customDarkSquareStyle: { backgroundColor: '#9db4a6' },
-  customLightSquareStyle: { backgroundColor: '#ecebe4' },
+  customDarkSquareStyle: { backgroundColor: 'var(--sq-d)' },
+  customLightSquareStyle: { backgroundColor: 'var(--sq-l)' },
   customBoardStyle: { borderRadius: 10, boxShadow: '0 10px 32px rgba(43,54,49,.12)' },
   animationDuration: 150,
 }
@@ -21,6 +21,8 @@ const grade = d => (d >= 20 ? 'blunder' : d >= 10 ? 'mistake' : d >= 5 ? 'inacc'
 const LABEL = { blunder: 'Blunder', mistake: 'Salah langkah', inacc: 'Kurang pas', ok: 'Aman' }
 const pairs = list => list.reduce((a, m, i) => (i % 2 ? (a[a.length - 1].push(m), a) : (a.push([m]), a)), [])
 
+const PLAYER = 'Rechaa' // ganti di sini kalau mau nama lain
+const BOT = 'Chesu'
 const pick = a => a[Math.floor(Math.random() * a.length)]
 const MSG = {
   greet: ['Yuk mulai! Jangan nangis ya 😎', 'Santai aja, gua juga santai kok.', 'Gas, lu jalan duluan atau gua? 😄'],
@@ -62,6 +64,10 @@ function Play({ onReview }) {
   const lv = LEVELS.find(l => l.id === lvl)
   const sync = () => setTick(t => t + 1)
 
+  const pgnOf = () => {
+    g.current.header('White', color === 'w' ? PLAYER : BOT, 'Black', color === 'w' ? BOT : PLAYER)
+    return g.current.pgn()
+  }
   const say = t => setChat(c => [...c.slice(-30), t])
   async function reply() {
     if (g.current.isGameOver()) return
@@ -162,7 +168,7 @@ function Play({ onReview }) {
           <button className="primary" onClick={() => fresh('w')}>Main putih</button>
           <button className="primary" onClick={() => fresh('b')}>Main hitam</button>
           <button onClick={undo} disabled={thinking || !hist.length}>Undo langkah</button>
-          <button onClick={() => onReview(game.pgn())} disabled={!hist.length}>Bedah game ini</button>
+          <button onClick={() => onReview(pgnOf())} disabled={!hist.length}>Bedah game ini</button>
         </div>
         <div className="moves">
           {pairs(hist).map((p, i) => (
@@ -179,7 +185,7 @@ function Play({ onReview }) {
           <p className="hint">{status}</p>
           <div className="btns">
             <button className="primary" onClick={() => { setEndOpen(false); fresh(color) }}>Main lagi</button>
-            <button onClick={() => { setEndOpen(false); onReview(game.pgn()) }}>Bedah game ini</button>
+            <button onClick={() => { setEndOpen(false); onReview(pgnOf()) }}>Bedah game ini</button>
           </div>
         </div>
       </div>
@@ -206,7 +212,8 @@ function Analyze({ initial }) {
     try { g.loadPgn(text.trim()) } catch { setErr('PGN-nya kebaca aneh. Coba copy ulang dari chess.com.'); return }
     const hist = g.history({ verbose: true })
     if (!hist.length) { setErr('PGN-nya nggak ada langkahnya.'); return }
-    const names = { w: g.header().White || 'Putih', b: g.header().Black || 'Hitam' }
+    const nm = (v, d) => (!v || v === '?' || v === 'Unknown' ? d : v)
+    const names = { w: nm(g.header().White, 'Pemain 1'), b: nm(g.header().Black, 'Pemain 2') }
     const r = new Chess(); const fens = [r.fen()]
     for (const m of hist) { r.move(m.san); fens.push(r.fen()) }
     setBusy(true); setRes(null); setCur(0); setTotal(fens.length); setProg(0)
@@ -307,8 +314,8 @@ function Analyze({ initial }) {
       </div>
       <aside className="panel">
         <div className="acc">
-          <div><b>{res.acc.w}</b><span>{res.names.w}</span></div>
-          <div><b>{res.acc.b}</b><span>{res.names.b}</span></div>
+          <div><i className="lbl">Akurasi</i><b>{res.acc.w}</b><span>{res.names.w}</span></div>
+          <div><i className="lbl">Akurasi</i><b>{res.acc.b}</b><span>{res.names.b}</span></div>
         </div>
         {inFree ? (
           <div className="live">
@@ -346,12 +353,21 @@ export default function App() {
   const [tab, setTab] = useState('main')
   const [review, setReview] = useState('')
   const [muted, setMuted] = useState(false)
+  const [theme, setTheme] = useState(() => {
+    try { const t = localStorage.getItem('chesu-theme'); if (t) return t } catch {}
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  })
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    try { localStorage.setItem('chesu-theme', theme) } catch {}
+  }, [theme])
   return (
     <div className="wrap">
       <header>
         <h1>Chesu</h1>
         <div className="hr">
           <button className="snd" aria-label="Suara" onClick={() => { const v = !muted; setMuted(v); sfx.setMuted(v) }}>{muted ? '🔇' : '🔊'}</button>
+          <button className="snd" aria-label="Ganti tema" onClick={() => setTheme(t => (t === 'dark' ? 'light' : 'dark'))}>{theme === 'dark' ? '☀️' : '🌙'}</button>
           <nav className="seg">
           <button className={tab === 'main' ? 'on' : ''} onClick={() => setTab('main')}>Main</button>
           <button className={tab === 'analisis' ? 'on' : ''} onClick={() => setTab('analisis')}>Analisis</button>
