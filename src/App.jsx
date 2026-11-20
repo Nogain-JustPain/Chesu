@@ -326,7 +326,7 @@ function Analyze({ initial }) {
         <div className="eval"><i style={{ height: `${w}%` }} /></div>
         <div style={{ flex: 1 }}>
           <Chessboard {...BOARD} position={shown} onPieceDrop={tryMove} onSquareClick={onSq} onPieceDragBegin={(p, sq) => setSel(sq)}
-            customSquareStyles={styles} customArrows={bu ? [[bu.slice(0, 2), bu.slice(2, 4), 'rgba(95,133,119,.75)']] : []} />
+            customSquareStyles={styles} customArrows={bu ? [[bu.slice(0, 2), bu.slice(2, 4), 'rgba(240,170,60,.9)']] : []} />
           <div className="btns nav">
             <button onClick={() => go(0)}>⏮</button><button onClick={() => go(c => c - 1)}>◀</button>
             <button onClick={() => go(c => c + 1)}>▶</button><button onClick={() => go(n)}>⏭</button>
@@ -350,7 +350,7 @@ function Analyze({ initial }) {
         ) : (
           <>
             <p className="status small">
-              {mv ? <><b>{Math.ceil(cur / 2)}{mv.color === 'w' ? '.' : '...'} {mv.san}</b> · {LABEL[mv.cls]}{mv.cls !== 'ok' && res.bestSan[cur - 1] ? `. Harusnya: ${res.bestSan[cur - 1]}` : ''}</> : 'Posisi awal. Panah hijau = langkah terbaik di posisi ini.'}
+              {mv ? <><b>{Math.ceil(cur / 2)}{mv.color === 'w' ? '.' : '...'} {mv.san}</b> · {LABEL[mv.cls]}{mv.cls !== 'ok' && res.bestSan[cur - 1] ? `. Harusnya: ${res.bestSan[cur - 1]}` : ''}</> : 'Posisi awal. Panah oranye = langkah terbaik di posisi ini.'}
             </p>
             <p className="hint">Geser atau klik bidak di papan buat nyoba variasi sendiri. Mesin ikut ngitung langsung.</p>
           </>
