@@ -5,8 +5,8 @@ import { getEngine } from './engine'
 import { sfx } from './sfx'
 
 const LEVELS = [
-  { id: 'pemula', name: 'Pemula', depth: 1, mpv: 5, window: 500 },
-  { id: 'santai', name: 'Santai', depth: 3, mpv: 4, window: 200 },
+  { id: 'pemula', name: 'Pemula', depth: 1, mpv: 8, window: 900, rnd: 0.3 },
+  { id: 'santai', name: 'Santai', depth: 2, mpv: 6, window: 450, rnd: 0.12 },
   { id: 'menengah', name: 'Menengah', depth: 8, elo: 1400 },
   { id: 'kuat', name: 'Kuat', depth: 12, elo: 1900 },
 ]
@@ -35,6 +35,7 @@ const MSG = {
   cpuMate: ['Skakmat! GG, rematch yuk 🤝', 'Skakmat. Seru kok mainnya!'],
   playerMate: ['Yah, kalah gua. GG, bagus mainnya! 👏', 'Skakmat… oke, lu menang. Rematch?'],
   draw: ['Seri. Lumayan lah 🤝'],
+  fatal: ['Eh… lu beneran mau jalanin itu? 😳', 'Waduh, itu bahaya banget buat lu 👀', 'Gua nggak enak nih, tapi makasih ya 😅', 'Langkah barusan… hmm, yakin?', 'Wah, ini sih gua yang untung 😬'],
   generic: ['Hmm, gua mikir dulu…', 'Oke, gua jalan ini.', 'Menarik. Lanjut.', 'Santai, kita nikmatin aja.', 'Boleh juga pembukaannya.'],
 }
 
@@ -48,6 +49,12 @@ function dots(game, sq) {
   return st
 }
 
+// Penilai terpisah (kedalaman 10) supaya blunder lu tetap kebaca walau lawan di level rendah
+async function judge(fen) {
+  const o = await getEngine().run(fen, { depth: 10 })
+  return Math.max(-1000, Math.min(1000, o.lines[0]?.cp ?? 0))
+}
+
 function Play({ onReview }) {
   const [lvl, setLvl] = useState('santai')
   const [color, setColor] = useState('w')
@@ -56,6 +63,7 @@ function Play({ onReview }) {
   const g = useRef(new Chess())
   const gid = useRef(0)
   const prevCp = useRef(null)
+  const base = useRef(30) // nilai posisi sebelum langkah lu, dari sisi lu
   const [sel, setSel] = useState(null)
   const [endOpen, setEndOpen] = useState(false)
   const chatRef = useRef(null)
@@ -74,11 +82,22 @@ function Play({ onReview }) {
     const id = gid.current, t0 = Date.now()
     const pm = g.current.history({ verbose: true }).slice(-1)[0]
     setThinking(true)
+    let fatal = false
+    if (base.current != null && pm && pm.color === color) {
+      const a = await judge(g.current.fen())
+      if (id !== gid.current) return
+      fatal = winPct(base.current) - winPct(-a) >= 25
+    }
     const r = await getEngine().run(g.current.fen(), { depth: lv.depth, multipv: lv.mpv || 1, elo: lv.elo })
     let uci = r.best, line = r.lines[0]
     if (lv.window && r.lines.length) {
       const pool = r.lines.filter(l => l.cp >= r.lines[0].cp - lv.window)
       line = pool[Math.floor(Math.random() * pool.length)]; uci = line.pv[0]
+    }
+    // kadang main sembarang langkah legal, biar blunder-nya terasa manusiawi
+    if (lv.rnd && Math.random() < lv.rnd) {
+      const m = pick(g.current.moves({ verbose: true }))
+      uci = m.from + m.to + (m.promotion || ''); line = null
     }
     // jeda biar terasa seperti lawan yang lagi mikir
     const wait = (lv.id === 'pemula' ? 500 : 900) + Math.random() * 1300 - (Date.now() - t0)
@@ -95,6 +114,7 @@ function Play({ onReview }) {
     let kind = 'generic'
     if (gm.isCheckmate()) kind = 'cpuMate'
     else if (gm.isGameOver()) kind = 'draw'
+    else if (fatal) kind = 'fatal'
     else if (lv.depth >= 3 && delta >= 150) kind = 'gloat'
     else if (lv.depth >= 3 && delta <= -150) kind = 'great'
     else if (mv?.captured) kind = 'cpuCapture'
@@ -103,10 +123,11 @@ function Play({ onReview }) {
     else if (pm?.san.includes('+')) kind = 'playerCheck'
     say(pick(MSG[kind]))
     setThinking(false); sync()
+    if (!gm.isGameOver()) judge(gm.fen()).then(v => { if (id === gid.current) base.current = v })
   }
   function fresh(c) {
     gid.current++
-    g.current = new Chess(); prevCp.current = null
+    g.current = new Chess(); prevCp.current = null; base.current = c === 'w' ? 30 : null
     setColor(c); setThinking(false); setSel(null); setChat([pick(MSG.greet)]); sync()
     if (c === 'b') reply()
   }
@@ -128,7 +149,7 @@ function Play({ onReview }) {
   }
   function undo() {
     if (thinking || !g.current.history().length) return
-    g.current.undo(); prevCp.current = null; setSel(null)
+    g.current.undo(); prevCp.current = null; base.current = null; setSel(null)
     if (g.current.turn() !== color && g.current.history().length) g.current.undo()
     sync()
   }
